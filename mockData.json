@@ -1,0 +1,42 @@
+[
+    {
+        "id": 1,
+        "name": "Amphisbaena"
+    },
+    {
+        "id": 2,
+        "name": "Monocerus"
+    },
+    {
+        "id": 3,
+        "name": "Manticore"
+    },
+    {
+        "id": 4,
+        "name": "Mandrake"
+    },
+    {
+        "id": 5,
+        "name": "Parandrus"
+    },
+    {
+        "id": 6,
+        "name": "Peridexion Tree"
+    },
+    {
+        "id": 7,
+        "name": "Scitalis"
+    },
+    {
+        "id": 8,
+        "name": "Sea-pig"
+    },
+    {
+        "id": 9,
+        "name": "Hippocampus"
+    },
+    {
+        "id": 10,
+        "name": "Yale"
+    }
+]
