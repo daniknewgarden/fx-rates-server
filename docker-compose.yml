@@ -1,0 +1,17 @@
+services:
+  db:
+    image: mongo:7.0.1
+    container_name: myDataBase
+    restart: always
+    ports:
+      - 27017:27017
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: mySecureDbPassword1!
+    volumes:
+      - type: volume
+        source: my_db_data
+        target: /data/db
+
+volumes:
+  my_db_data:
