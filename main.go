@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,12 +11,40 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var URL = "https://due-diligence-hub.com/en/tools/cross_rate_matrix"
+const URL = "https://due-diligence-hub.com/en/tools/cross_rate_matrix"
+
+var mongoClient *mongo.Client
+
+func getMongoClient() *mongo.Client {
+	credential := options.Credential{
+   		Username: "root",
+   		Password: "mySecureDbPassword1!",
+	}
+
+	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017").SetAuth(credential)
+	client, err := mongo.Connect(context.TODO(), clientOptions)
+
+	if err != nil {
+    	log.Fatal(err)
+	}
+
+	err = client.Ping(context.TODO(), nil)
+
+	if err != nil {
+    	log.Fatal(err)
+	}
+
+	fmt.Println("Connected to MongoDB!")
+
+	return client
+}
 
 func cleanRateValue(rateValue string) string {
     rateValue = strings.ReplaceAll(rateValue, " ", "")
@@ -37,27 +66,78 @@ func fetchDocument(url string, retries int) (*goquery.Document, error) {
     return nil, fmt.Errorf("failed to fetch document after %d retries", retries)
 }
 
+func getRates(mongoClient *mongo.Client, baseCurrency string) primitive.M {
+	usdFxMatrixCollection := mongoClient.Database("test").Collection("fx-matrix")
+
+	filter := bson.M{"baseCurrency": "USD"}
+	var usdRates = bson.M{"baseCurrency": "USD", "fxRates": make(map[string]float64)}
+
+	err := usdFxMatrixCollection.FindOne(context.TODO(), filter).Decode(&usdRates)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if baseCurrency == "USD" {
+		return usdRates["fxRates"].(primitive.M)
+	}
+
+	baseCurrencyRate, ok := usdRates["fxRates"].(primitive.M)[baseCurrency].(float64)
+	if !ok {
+	    log.Fatal("Failed to convert baseCurrencyRate to float64")
+	}
+
+	fxRates, ok := usdRates["fxRates"].(primitive.M)
+	if !ok {
+	    log.Fatal("Failed to convert usdRates[\"fxRates\"] to primitive.M")
+	}
+
+
+	for currency, usdRate := range fxRates {
+    	usdRateFloat, ok := usdRate.(float64)
+    	if !ok {
+    	    log.Fatal("Failed to convert usdRate to float64")
+    	}
+    	fxRates[currency] = usdRateFloat / baseCurrencyRate
+	}
+
+	return fxRates
+}
+
+func getRatesHandler(w http.ResponseWriter, r *http.Request) {
+	baseCurrency := r.URL.Query().Get("baseCurrency")
+	result := getRates(mongoClient, baseCurrency)
+	// convert result from map to object
+	type Rate struct {
+		Currency string  `json:"currency"`
+		Value    float64 `json:"value"`
+	}
+
+	var rates []Rate
+	for currency, value := range result {
+		rates = append(rates, Rate{
+			Currency: currency,
+			Value:    value.(float64),
+		})
+	}
+
+	response := struct {
+		Rates []Rate `json:"rates"`
+	}{
+		Rates: rates,
+	}
+
+	jsonResponse, err := json.Marshal(response)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonResponse)
+}
+
 func main() {
 	// Connect to mongoDB
-	credential := options.Credential{
-   		Username: "root",
-   		Password: "mySecureDbPassword1!",
-	}
-
-	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017").SetAuth(credential)
-	client, err := mongo.Connect(context.TODO(), clientOptions)
-
-	if err != nil {
-    	log.Fatal(err)
-	}
-
-	err = client.Ping(context.TODO(), nil)
-
-	if err != nil {
-    	log.Fatal(err)
-	}
-
-	fmt.Println("Connected to MongoDB!")
+	mongoClient = getMongoClient()
 
 	// Fetch the document
     doc, err := fetchDocument(URL, 3)
@@ -89,7 +169,7 @@ func main() {
 	})
 
 	// Save parsed data to MongoDB
-	usdFxMatrixCollection := client.Database("test").Collection("fx-matrix")
+	usdFxMatrixCollection := mongoClient.Database("test").Collection("fx-matrix")
 
 	filter := bson.M{"baseCurrency": "USD"}
 	update := bson.M{"$set": bson.M{"fxRates": usdFXMatrixMap}}
@@ -101,5 +181,9 @@ func main() {
 		log.Fatal(err)
 	}
 
-	fmt.Println("USD FX Matrix saved to MongoDB!", usdFXMatrixMap)
+	fmt.Println("USD FX Matrix saved to database!")
+
+	// Start the server
+	http.HandleFunc("/getRates", getRatesHandler)
+	http.ListenAndServe(":8080", nil)
 }
